@@ -402,6 +402,248 @@ def generate_dataset(
     return dataset
 
 
+def prepare_training_data(
+    dataset: List[Tuple[str, int]],
+    feature_extractor: Optional['FeatureExtractor'] = None,
+    use_url_features: bool = True,
+    train_ratio: float = 0.7,
+    val_ratio: float = 0.15,
+    test_ratio: float = 0.15,
+    normalize: bool = True,
+    stratify: bool = True,
+    seed: Optional[int] = None,
+    verbose: int = 1
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict]:
+    """
+    Prepare training data with preprocessing, normalization, and train/val/test split.
+    
+    This function implements a complete training pipeline:
+    1. Extract features from raw dataset (URLs/domains)
+    2. Preprocess and normalize features (fit on training set, apply to all splits)
+    3. Split into train/validation/test sets with optional stratification
+    4. Return all splits ready for model training
+    
+    Args:
+        dataset: List of tuples (url_or_domain, label) where label is 0 or 1
+        feature_extractor: FeatureExtractor instance. If None, creates a new one.
+        use_url_features: If True, extracts full URL features (25 dim). If False, uses domain-only features (8 dim).
+        train_ratio: Proportion of data for training (default 0.7)
+        val_ratio: Proportion of data for validation (default 0.15)
+        test_ratio: Proportion of data for testing (default 0.15)
+        normalize: If True, applies normalization fitted on training data (default True)
+        stratify: If True, uses stratified splitting to maintain class balance (default True)
+        seed: Random seed for reproducibility (for shuffling and splitting)
+        verbose: Verbosity level (0=silent, 1=info messages)
+        
+    Returns:
+        Tuple containing:
+        - X_train: Training features (numpy array)
+        - y_train: Training labels (numpy array)
+        - X_val: Validation features (numpy array)
+        - y_val: Validation labels (numpy array)
+        - X_test: Test features (numpy array)
+        - y_test: Test labels (numpy array)
+        - normalization_stats: Dictionary with normalization parameters (mean, std, min, max per feature)
+        
+    Raises:
+        ValueError: If ratios don't sum to 1.0, or dataset is empty
+    """
+    import random
+    from collections import Counter
+    
+    # Validate ratios
+    if abs(train_ratio + val_ratio + test_ratio - 1.0) > 1e-6:
+        raise ValueError(f"train_ratio + val_ratio + test_ratio must equal 1.0, got {train_ratio + val_ratio + test_ratio}")
+    
+    if not dataset:
+        raise ValueError("Dataset is empty. Cannot prepare training data.")
+    
+    # Set random seed for reproducibility
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+    
+    # Initialize feature extractor if not provided
+    if feature_extractor is None:
+        feature_extractor = FeatureExtractor()
+    
+    if verbose >= 1:
+        print(f"Preparing training data from {len(dataset)} samples...")
+    
+    # Step 1: Extract features from all samples
+    features_list = []
+    labels_list = []
+    
+    if verbose >= 1:
+        print("Extracting features from dataset...")
+    
+    for url_or_domain, label in dataset:
+        # Determine which feature extraction method to use
+        if use_url_features:
+            # Use URL features (25 dimensions)
+            if '/' in url_or_domain or url_or_domain.startswith('http'):
+                features = feature_extractor.extract_url_features(url_or_domain)
+            else:
+                # Domain only, but we want URL features
+                # Pad domain features or extract as URL (extract_url_features handles this)
+                features = feature_extractor.extract_url_features(url_or_domain)
+        else:
+            # Use domain-only features (8 dimensions)
+            features = feature_extractor.extract_domain_features(url_or_domain)
+        
+        features_list.append(features)
+        labels_list.append(label)
+    
+    # Convert to numpy arrays
+    X = np.array(features_list, dtype=np.float32)
+    y = np.array(labels_list, dtype=np.float32)
+    
+    feature_dim = X.shape[1]
+    if verbose >= 1:
+        print(f"  Extracted {feature_dim}-dimensional features from {len(X)} samples")
+        label_counts = Counter(y)
+        print(f"  Class distribution: {dict(label_counts)}")
+    
+    # Step 2: Split into train/val/test sets
+    n_samples = len(X)
+    
+    if stratify:
+        # Stratified split to maintain class balance
+        # Separate samples by class
+        class_0_indices = np.where(y == 0)[0]
+        class_1_indices = np.where(y == 1)[0]
+        
+        # Shuffle each class separately
+        if seed is not None:
+            np.random.seed(seed)
+        np.random.shuffle(class_0_indices)
+        np.random.shuffle(class_1_indices)
+        
+        # Calculate split sizes for each class
+        n_train_0 = int(len(class_0_indices) * train_ratio)
+        n_val_0 = int(len(class_0_indices) * val_ratio)
+        n_train_1 = int(len(class_1_indices) * train_ratio)
+        n_val_1 = int(len(class_1_indices) * val_ratio)
+        
+        # Split indices for each class
+        train_indices_0 = class_0_indices[:n_train_0]
+        val_indices_0 = class_0_indices[n_train_0:n_train_0 + n_val_0]
+        test_indices_0 = class_0_indices[n_train_0 + n_val_0:]
+        
+        train_indices_1 = class_1_indices[:n_train_1]
+        val_indices_1 = class_1_indices[n_train_1:n_train_1 + n_val_1]
+        test_indices_1 = class_1_indices[n_train_1 + n_val_1:]
+        
+        # Combine indices
+        train_indices = np.concatenate([train_indices_0, train_indices_1])
+        val_indices = np.concatenate([val_indices_0, val_indices_1])
+        test_indices = np.concatenate([test_indices_0, test_indices_1])
+        
+        # Shuffle combined indices to mix classes
+        if seed is not None:
+            np.random.seed(seed + 1)  # Different seed for final shuffle
+        np.random.shuffle(train_indices)
+        np.random.shuffle(val_indices)
+        np.random.shuffle(test_indices)
+        
+        # Split data
+        X_train = X[train_indices]
+        y_train = y[train_indices]
+        X_val = X[val_indices]
+        y_val = y[val_indices]
+        X_test = X[test_indices]
+        y_test = y[test_indices]
+    else:
+        # Simple random split
+        # Shuffle indices
+        indices = np.arange(n_samples)
+        random.shuffle(indices)
+        
+        # Calculate split points
+        n_train = int(n_samples * train_ratio)
+        n_val = int(n_samples * val_ratio)
+        
+        # Split indices
+        train_indices = indices[:n_train]
+        val_indices = indices[n_train:n_train + n_val]
+        test_indices = indices[n_train + n_val:]
+        
+        # Split data
+        X_train = X[train_indices]
+        y_train = y[train_indices]
+        X_val = X[val_indices]
+        y_val = y[val_indices]
+        X_test = X[test_indices]
+        y_test = y[test_indices]
+    
+    if verbose >= 1:
+        print(f"\nData split:")
+        print(f"  Training set:   {len(X_train)} samples ({len(X_train)/n_samples*100:.1f}%)")
+        print(f"  Validation set: {len(X_val)} samples ({len(X_val)/n_samples*100:.1f}%)")
+        print(f"  Test set:       {len(X_test)} samples ({len(X_test)/n_samples*100:.1f}%)")
+        print(f"  Training class distribution: {dict(Counter(y_train))}")
+        print(f"  Validation class distribution: {dict(Counter(y_val))}")
+        print(f"  Test class distribution: {dict(Counter(y_test))}")
+    
+    # Step 3: Normalization (fit on training set, apply to all splits)
+    normalization_stats = {}
+    
+    if normalize:
+        if verbose >= 1:
+            print("\nNormalizing features (fit on training set)...")
+        
+        # Compute statistics from training set
+        feature_mean = np.mean(X_train, axis=0, keepdims=True)
+        feature_std = np.std(X_train, axis=0, keepdims=True)
+        feature_min = np.min(X_train, axis=0, keepdims=True)
+        feature_max = np.max(X_train, axis=0, keepdims=True)
+        
+        # Avoid division by zero for constant features
+        feature_std = np.where(feature_std < 1e-8, 1.0, feature_std)
+        
+        # Store normalization statistics
+        normalization_stats = {
+            'mean': feature_mean.flatten().copy(),
+            'std': feature_std.flatten().copy(),
+            'min': feature_min.flatten().copy(),
+            'max': feature_max.flatten().copy(),
+            'normalized': True
+        }
+        
+        # Apply standardization (z-score normalization): (x - mean) / std
+        # This centers features at 0 and scales them to unit variance
+        X_train_norm = (X_train - feature_mean) / feature_std
+        X_val_norm = (X_val - feature_mean) / feature_std
+        X_test_norm = (X_test - feature_mean) / feature_std
+        
+        # Optional: Also clip outliers to reasonable range (e.g., [-3, 3] standard deviations)
+        # This helps with stability during training
+        clip_range = 5.0  # Clip at 5 standard deviations
+        X_train_norm = np.clip(X_train_norm, -clip_range, clip_range)
+        X_val_norm = np.clip(X_val_norm, -clip_range, clip_range)
+        X_test_norm = np.clip(X_test_norm, -clip_range, clip_range)
+        
+        if verbose >= 1:
+            print(f"  Applied standardization: mean=0, std=1 (clipped at ±{clip_range} std)")
+            print(f"  Feature ranges after normalization:")
+            print(f"    Training:   [{X_train_norm.min():.3f}, {X_train_norm.max():.3f}]")
+            print(f"    Validation: [{X_val_norm.min():.3f}, {X_val_norm.max():.3f}]")
+            print(f"    Test:       [{X_test_norm.min():.3f}, {X_test_norm.max():.3f}]")
+        
+        X_train = X_train_norm
+        X_val = X_val_norm
+        X_test = X_test_norm
+    else:
+        normalization_stats = {'normalized': False}
+        if verbose >= 1:
+            print("\nSkipping normalization (normalize=False)")
+    
+    if verbose >= 1:
+        print("\nTraining data preparation complete!")
+    
+    return X_train, y_train, X_val, y_val, X_test, y_test, normalization_stats
+
+
 class FeatureExtractor:
     """
     Feature extraction from URLs and domains.
