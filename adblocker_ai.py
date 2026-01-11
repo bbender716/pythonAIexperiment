@@ -24,7 +24,7 @@ class AdBlockListParser:
     def __init__(self):
         """Initialize the parser with default list URLs."""
         self.default_lists = [
-            'https://big.oisd.nl',
+            'https://easylist.to/easylist/easylist.txt',
             'https://easylist.to/easylist/easyprivacy.txt'
         ]
         self.blocked_domains: Set[str] = set()
@@ -1101,6 +1101,10 @@ class AdBlockerModel:
         Returns:
             Compiled Keras model
         """
+        # Return existing model if already built
+        if self.model is not None:
+            return self.model
+        
         model = tf.keras.Sequential()
         
         # Input layer (first hidden layer)
@@ -1745,3 +1749,195 @@ class RLHFInterface(ABC):
 #     def compute_reward(self, reward_model, predictions, features, feedback):
 #         # Reward computation
 #         pass
+
+
+# ============================================================================
+# Main Execution Script
+# ============================================================================
+
+if __name__ == '__main__':
+    """
+    Main execution script to download ad-blocker lists, generate dataset,
+    train the model, and save it.
+    
+    Usage:
+        python adblocker_ai.py
+    """
+    import os
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description='Train TensorFlow ad-blocker model from Adblock Plus lists'
+    )
+    parser.add_argument(
+        '--list-urls',
+        type=str,
+        nargs='+',
+        default=None,
+        help='URLs of Adblock Plus format lists to download (default: uses parser defaults)'
+    )
+    parser.add_argument(
+        '--max-samples',
+        type=int,
+        default=None,
+        help='Maximum number of samples per class (default: use all available)'
+    )
+    parser.add_argument(
+        '--epochs',
+        type=int,
+        default=50,
+        help='Number of training epochs (default: 50)'
+    )
+    parser.add_argument(
+        '--batch-size',
+        type=int,
+        default=32,
+        help='Batch size for training (default: 32)'
+    )
+    parser.add_argument(
+        '--model-dir',
+        type=str,
+        default='./adblocker_model',
+        help='Directory to save the trained model (default: ./adblocker_model)'
+    )
+    parser.add_argument(
+        '--use-domain-features',
+        action='store_true',
+        help='Use domain-only features (8 dim) instead of URL features (25 dim)'
+    )
+    parser.add_argument(
+        '--seed',
+        type=int,
+        default=42,
+        help='Random seed for reproducibility (default: 42)'
+    )
+    
+    args = parser.parse_args()
+    
+    print("=" * 70)
+    print("TensorFlow Ad-Blocker AI Model Training")
+    print("=" * 70)
+    print()
+    
+    # Step 1: Download and parse ad-blocker lists
+    print("Step 1: Downloading and parsing ad-blocker lists...")
+    print("-" * 70)
+    list_parser = AdBlockListParser()
+    
+    if args.list_urls:
+        parsed_data = list_parser.download_and_parse(args.list_urls)
+    else:
+        parsed_data = list_parser.download_and_parse()
+    
+    print(f"\nTotal parsed data:")
+    print(f"  Domains: {len(parsed_data['domains'])}")
+    print(f"  URL patterns: {len(parsed_data['url_patterns'])}")
+    print(f"  Regex patterns: {len(parsed_data['regex_patterns'])}")
+    print(f"  Domain patterns: {len(parsed_data['domain_patterns'])}")
+    print()
+    
+    # Step 2: Generate dataset
+    print("Step 2: Generating labeled dataset...")
+    print("-" * 70)
+    dataset = generate_dataset(
+        parser=list_parser,
+        max_samples_per_class=args.max_samples,
+        balance_dataset=True,
+        seed=args.seed
+    )
+    
+    if not dataset:
+        print("Error: Failed to generate dataset. Please check list downloads.")
+        exit(1)
+    
+    print(f"Generated dataset with {len(dataset)} samples")
+    label_counts = {}
+    for _, label in dataset:
+        label_counts[label] = label_counts.get(label, 0) + 1
+    print(f"  Class distribution: {label_counts}")
+    print()
+    
+    # Step 3: Prepare training data
+    print("Step 3: Preparing training data (feature extraction, normalization, splitting)...")
+    print("-" * 70)
+    use_url_features = not args.use_domain_features
+    input_dim = 25 if use_url_features else 8
+    
+    X_train, y_train, X_val, y_val, X_test, y_test, norm_stats = prepare_training_data(
+        dataset=dataset,
+        feature_extractor=None,  # Create new FeatureExtractor
+        use_url_features=use_url_features,
+        train_ratio=0.7,
+        val_ratio=0.15,
+        test_ratio=0.15,
+        normalize=True,
+        stratify=True,
+        seed=args.seed,
+        verbose=1
+    )
+    print()
+    
+    # Step 4: Build and train model
+    print("Step 4: Building and training model...")
+    print("-" * 70)
+    model = AdBlockerModel(input_dim=input_dim)
+    
+    print("\nModel architecture:")
+    print(model.get_model_summary())
+    print()
+    
+    print(f"Training model for {args.epochs} epochs with batch size {args.batch_size}...")
+    history = model.train(
+        X=X_train,
+        y=y_train,
+        validation_data=(X_val, y_val),
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        verbose=1
+    )
+    print()
+    
+    # Step 5: Evaluate on test set
+    print("Step 5: Evaluating on test set...")
+    print("-" * 70)
+    test_results = model.evaluate(X_test, y_test, verbose=1)
+    print("\nTest set metrics:")
+    for metric, value in test_results.items():
+        print(f"  {metric}: {value:.4f}")
+    print()
+    
+    # Step 6: Save model
+    print("Step 6: Saving model...")
+    print("-" * 70)
+    os.makedirs(args.model_dir, exist_ok=True)
+    model.save_model(args.model_dir)
+    print(f"Model saved to: {args.model_dir}")
+    print()
+    
+    # Step 7: Test predictions
+    print("Step 7: Testing predictions on sample URLs...")
+    print("-" * 70)
+    test_urls = [
+        "https://example.com/ads/banner.jpg",
+        "https://doubleclick.net/tracker.js",
+        "https://google.com/search",
+        "https://github.com/user/repo",
+        "https://ads.example.com/track",
+    ]
+    
+    for url in test_urls:
+        pred, conf = model.predict(url)
+        label = "AD" if pred == 1 else "LEGITIMATE"
+        print(f"  {url}")
+        print(f"    Prediction: {label} (confidence: {conf:.4f})")
+    print()
+    
+    print("=" * 70)
+    print("Training complete!")
+    print("=" * 70)
+    print(f"\nTo use the model in your code:")
+    print(f"  from adblocker_ai import AdBlockerModel")
+    print(f"  model = AdBlockerModel(input_dim={input_dim})")
+    print(f"  model.load_model('{args.model_dir}')")
+    print(f"  prediction, confidence = model.predict('https://example.com')")
+    print()
