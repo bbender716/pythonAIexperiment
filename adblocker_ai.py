@@ -1105,33 +1105,31 @@ class AdBlockerModel:
         if self.model is not None:
             return self.model
         
+        # Create a fresh Sequential model
         model = tf.keras.Sequential()
         
-        # Input layer (first hidden layer)
+        # Input layer (first hidden layer) - let Keras auto-generate name to avoid conflicts
         model.add(tf.keras.layers.Dense(
             units=self.hidden_units[0],
             activation='relu',
-            input_shape=(self.input_dim,),
-            name='input_layer'
+            input_shape=(self.input_dim,)
         ))
         
         # Add dropout for regularization
-        model.add(tf.keras.layers.Dropout(0.2, name='dropout_0'))
+        model.add(tf.keras.layers.Dropout(0.2))
         
         # Additional hidden layers
         for i, units in enumerate(self.hidden_units[1:], start=1):
             model.add(tf.keras.layers.Dense(
                 units=units,
-                activation='relu',
-                name=f'hidden_layer_{i}'
+                activation='relu'
             ))
-            model.add(tf.keras.layers.Dropout(0.2, name=f'dropout_{i}'))
+            model.add(tf.keras.layers.Dropout(0.2))
         
         # Output layer: single neuron with sigmoid activation
         model.add(tf.keras.layers.Dense(
             units=1,
-            activation='sigmoid',
-            name='output_layer'
+            activation='sigmoid'
         ))
         
         # Compile model
@@ -1324,10 +1322,18 @@ class AdBlockerModel:
         Save the trained model to disk.
         
         Args:
-            path: Directory path where to save the model (TensorFlow SavedModel format)
+            path: File path where to save the model (will append .keras extension if not present)
         """
         if self.model is None:
             raise ValueError("Model has not been built. Nothing to save.")
+        
+        # Append .keras extension if path doesn't already have a valid extension
+        if not path.endswith(('.keras', '.h5')):
+            path = path + '.keras'
+        
+        # Create parent directory if it doesn't exist
+        import os
+        os.makedirs(os.path.dirname(path) if os.path.dirname(path) else '.', exist_ok=True)
         
         self.model.save(path)
         print(f"Model saved to {path}")
@@ -1798,7 +1804,7 @@ if __name__ == '__main__':
         '--model-dir',
         type=str,
         default='./adblocker_model',
-        help='Directory to save the trained model (default: ./adblocker_model)'
+        help='Path to save the trained model (will append .keras extension if not present, default: ./adblocker_model)'
     )
     parser.add_argument(
         '--use-domain-features',
@@ -1909,9 +1915,7 @@ if __name__ == '__main__':
     # Step 6: Save model
     print("Step 6: Saving model...")
     print("-" * 70)
-    os.makedirs(args.model_dir, exist_ok=True)
     model.save_model(args.model_dir)
-    print(f"Model saved to: {args.model_dir}")
     print()
     
     # Step 7: Test predictions
