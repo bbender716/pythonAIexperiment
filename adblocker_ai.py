@@ -27,10 +27,18 @@ class AdBlockListParser:
             'https://easylist.to/easylist/easylist.txt',
             'https://easylist.to/easylist/easyprivacy.txt'
         ]
+        self.default_whitelist_lists = [
+            'https://raw.githubusercontent.com/anudeepND/whitelist/master/domains/whitelist.txt'
+        ]
         self.blocked_domains: Set[str] = set()
         self.url_patterns: List[str] = []
         self.regex_patterns: List[str] = []
         self.domain_patterns: List[str] = []
+        # Whitelist (exception rules starting with @@)
+        self.whitelist_domains: Set[str] = set()
+        self.whitelist_url_patterns: List[str] = []
+        self.whitelist_regex_patterns: List[str] = []
+        self.whitelist_domain_patterns: List[str] = []
         
     def download_list(self, url: str, timeout: int = 30) -> Optional[str]:
         """
@@ -71,9 +79,10 @@ class AdBlockListParser:
         if not line or line.startswith('!') or line.startswith('[') or line.startswith('#'):
             return None
         
-        # Skip exception rules (they allow content, not block it)
-        if line.startswith('@@'):
-            return None
+        # Handle exception rules (whitelist rules starting with @@)
+        is_whitelist = line.startswith('@@')
+        if is_whitelist:
+            line = line[2:]  # Remove @@ prefix
         
         # Parse domain rules: ||domain.com^ or ||domain.com
         if line.startswith('||'):
@@ -86,9 +95,10 @@ class AdBlockListParser:
                 domain = re.sub(r'\$.*$', '', domain)
                 if domain and not domain.startswith('!'):
                     return {
-                        'type': 'domain',
+                        'type': 'domain' if not is_whitelist else 'whitelist_domain',
                         'pattern': domain,
-                        'original': line
+                        'original': line,
+                        'is_whitelist': is_whitelist
                     }
         
         # Parse URL patterns that start with /
@@ -97,9 +107,10 @@ class AdBlockListParser:
             pattern = line[1:-1]  # Remove leading and trailing /
             if pattern:
                 return {
-                    'type': 'regex',
+                    'type': 'regex' if not is_whitelist else 'whitelist_regex',
                     'pattern': pattern,
-                    'original': line
+                    'original': line,
+                    'is_whitelist': is_whitelist
                 }
         
         # Parse URL path patterns: /ads/banner.jpg or */ads/*
@@ -116,15 +127,17 @@ class AdBlockListParser:
             
             if pattern and pattern != line:  # Only if we extracted something meaningful
                 return {
-                    'type': 'url_pattern',
+                    'type': 'url_pattern' if not is_whitelist else 'whitelist_url_pattern',
                     'pattern': pattern,
-                    'original': line
+                    'original': line,
+                    'is_whitelist': is_whitelist
                 }
             elif pattern and '/' in pattern:
                 return {
-                    'type': 'url_pattern',
+                    'type': 'url_pattern' if not is_whitelist else 'whitelist_url_pattern',
                     'pattern': pattern,
-                    'original': line
+                    'original': line,
+                    'is_whitelist': is_whitelist
                 }
         
         # Parse other domain patterns (without || prefix)
@@ -140,9 +153,10 @@ class AdBlockListParser:
             domain = line.split('##')[0].strip()  # Remove element hiding part if present
             if domain and not domain.startswith('!'):
                 return {
-                    'type': 'domain_pattern',
+                    'type': 'domain_pattern' if not is_whitelist else 'whitelist_domain_pattern',
                     'pattern': domain,
-                    'original': line
+                    'original': line,
+                    'is_whitelist': is_whitelist
                 }
         
         return None
@@ -155,12 +169,16 @@ class AdBlockListParser:
             content: The full content of the filter list
             
         Returns:
-            Dictionary containing parsed domains, URL patterns, and regex patterns
+            Dictionary containing parsed domains, URL patterns, regex patterns, and whitelist patterns
         """
         domains = set()
         url_patterns = []
         regex_patterns = []
         domain_patterns = []
+        whitelist_domains = set()
+        whitelist_url_patterns = []
+        whitelist_regex_patterns = []
+        whitelist_domain_patterns = []
         
         for line in content.split('\n'):
             parsed = self.parse_line(line)
@@ -173,20 +191,76 @@ class AdBlockListParser:
                     regex_patterns.append(parsed['pattern'])
                 elif parsed['type'] == 'domain_pattern':
                     domain_patterns.append(parsed['pattern'])
+                elif parsed['type'] == 'whitelist_domain':
+                    whitelist_domains.add(parsed['pattern'])
+                elif parsed['type'] == 'whitelist_url_pattern':
+                    whitelist_url_patterns.append(parsed['pattern'])
+                elif parsed['type'] == 'whitelist_regex':
+                    whitelist_regex_patterns.append(parsed['pattern'])
+                elif parsed['type'] == 'whitelist_domain_pattern':
+                    whitelist_domain_patterns.append(parsed['pattern'])
         
         return {
             'domains': domains,
             'url_patterns': url_patterns,
             'regex_patterns': regex_patterns,
-            'domain_patterns': domain_patterns
+            'domain_patterns': domain_patterns,
+            'whitelist_domains': whitelist_domains,
+            'whitelist_url_patterns': whitelist_url_patterns,
+            'whitelist_regex_patterns': whitelist_regex_patterns,
+            'whitelist_domain_patterns': whitelist_domain_patterns
         }
     
-    def download_and_parse(self, urls: Optional[List[str]] = None) -> dict:
+    def parse_plain_domain_list(self, content: str) -> Set[str]:
+        """
+        Parse a plain domain list (one domain per line).
+        
+        This method handles simple domain lists where each line contains a single domain.
+        Used for whitelist sources like the anudeepND whitelist.
+        
+        Args:
+            content: The content of the plain domain list
+            
+        Returns:
+            Set of domain strings
+        """
+        domains = set()
+        
+        for line in content.split('\n'):
+            # Remove whitespace
+            line = line.strip()
+            
+            # Skip empty lines and comments
+            if not line or line.startswith('#') or line.startswith('!'):
+                continue
+            
+            # Remove any trailing comments
+            if '#' in line:
+                line = line.split('#')[0].strip()
+            
+            # Remove any protocol prefixes
+            line = line.replace('http://', '').replace('https://', '')
+            
+            # Remove any path components
+            line = line.split('/')[0].split('?')[0].split(':')[0]
+            
+            # Skip if empty after cleaning
+            if not line:
+                continue
+            
+            # Add domain if it looks valid (contains at least one dot or is a TLD)
+            if '.' in line or line in ['com', 'org', 'net', 'edu', 'gov', 'io', 'co', 'me', 'tv', 'info']:
+                domains.add(line)
+        
+        return domains
+    
+    def download_and_parse(self, urls: Optional[List[str]] = None, include_whitelist: bool = True) -> dict:
         """
         Download and parse one or more Adblock Plus format lists.
         
         Args:
             urls: List of URLs to download. If None, uses default lists.
+            include_whitelist: If True, also downloads and parses default whitelist lists.
             
         Returns:
             Dictionary containing all parsed domains and patterns
@@ -198,7 +272,12 @@ class AdBlockListParser:
         all_url_patterns = []
         all_regex_patterns = []
         all_domain_patterns = []
+        all_whitelist_domains = set()
+        all_whitelist_url_patterns = []
+        all_whitelist_regex_patterns = []
+        all_whitelist_domain_patterns = []
         
+        # Download and parse main block lists (Adblock Plus format)
         for url in urls:
             print(f"Downloading and parsing: {url}")
             content = self.download_list(url)
@@ -208,21 +287,48 @@ class AdBlockListParser:
                 all_url_patterns.extend(parsed['url_patterns'])
                 all_regex_patterns.extend(parsed['regex_patterns'])
                 all_domain_patterns.extend(parsed['domain_patterns'])
+                all_whitelist_domains.update(parsed['whitelist_domains'])
+                all_whitelist_url_patterns.extend(parsed['whitelist_url_patterns'])
+                all_whitelist_regex_patterns.extend(parsed['whitelist_regex_patterns'])
+                all_whitelist_domain_patterns.extend(parsed['whitelist_domain_patterns'])
                 print(f"  Extracted {len(parsed['domains'])} domains, "
                       f"{len(parsed['url_patterns'])} URL patterns, "
                       f"{len(parsed['regex_patterns'])} regex patterns, "
                       f"{len(parsed['domain_patterns'])} domain patterns")
+                print(f"  Extracted {len(parsed['whitelist_domains'])} whitelist domains, "
+                      f"{len(parsed['whitelist_url_patterns'])} whitelist URL patterns, "
+                      f"{len(parsed['whitelist_regex_patterns'])} whitelist regex patterns, "
+                      f"{len(parsed['whitelist_domain_patterns'])} whitelist domain patterns")
+        
+        # Download and parse whitelist lists (plain domain lists)
+        if include_whitelist and self.default_whitelist_lists:
+            print(f"\nDownloading and parsing whitelist lists...")
+            for url in self.default_whitelist_lists:
+                print(f"Downloading whitelist: {url}")
+                content = self.download_list(url)
+                if content:
+                    whitelist_domains = self.parse_plain_domain_list(content)
+                    all_whitelist_domains.update(whitelist_domains)
+                    print(f"  Extracted {len(whitelist_domains)} whitelist domains")
         
         self.blocked_domains = all_domains
         self.url_patterns = all_url_patterns
         self.regex_patterns = all_regex_patterns
         self.domain_patterns = all_domain_patterns
+        self.whitelist_domains = all_whitelist_domains
+        self.whitelist_url_patterns = all_whitelist_url_patterns
+        self.whitelist_regex_patterns = all_whitelist_regex_patterns
+        self.whitelist_domain_patterns = all_whitelist_domain_patterns
         
         return {
             'domains': all_domains,
             'url_patterns': all_url_patterns,
             'regex_patterns': all_regex_patterns,
-            'domain_patterns': all_domain_patterns
+            'domain_patterns': all_domain_patterns,
+            'whitelist_domains': all_whitelist_domains,
+            'whitelist_url_patterns': all_whitelist_url_patterns,
+            'whitelist_regex_patterns': all_whitelist_regex_patterns,
+            'whitelist_domain_patterns': all_whitelist_domain_patterns
         }
     
     def generate_positive_samples(self, max_samples: Optional[int] = None) -> List[Tuple[str, int]]:
@@ -288,19 +394,168 @@ class AdBlockListParser:
     def get_domain_patterns(self) -> List[str]:
         """Return the list of domain patterns."""
         return self.domain_patterns.copy()
+    
+    def get_whitelist_domains(self) -> Set[str]:
+        """Return the set of whitelist domains."""
+        return self.whitelist_domains.copy()
+    
+    def get_whitelist_url_patterns(self) -> List[str]:
+        """Return the list of whitelist URL patterns."""
+        return self.whitelist_url_patterns.copy()
+    
+    def get_whitelist_regex_patterns(self) -> List[str]:
+        """Return the list of whitelist regex patterns."""
+        return self.whitelist_regex_patterns.copy()
+    
+    def get_whitelist_domain_patterns(self) -> List[str]:
+        """Return the list of whitelist domain patterns."""
+        return self.whitelist_domain_patterns.copy()
+    
+    def is_whitelisted(self, url_or_domain: str) -> bool:
+        """
+        Check if a URL or domain is whitelisted.
+        
+        Args:
+            url_or_domain: URL or domain string to check
+            
+        Returns:
+            True if the URL/domain matches any whitelist pattern, False otherwise
+        """
+        if not url_or_domain:
+            return False
+        
+        # Parse URL to extract domain and path
+        try:
+            parsed = urllib.parse.urlparse(url_or_domain)
+            domain = parsed.netloc or parsed.hostname or ''
+            path = parsed.path or ''
+            full_url = url_or_domain
+        except Exception:
+            # If parsing fails, treat as domain
+            domain = url_or_domain.split('/')[0].split(':')[0]
+            path = ''
+            full_url = url_or_domain
+        
+        # Check exact domain match
+        if domain in self.whitelist_domains:
+            return True
+        
+        # Check domain pattern matches (supports wildcards)
+        for pattern in self.whitelist_domain_patterns:
+            if self._match_pattern(domain, pattern):
+                return True
+        
+        # Check URL path patterns
+        for pattern in self.whitelist_url_patterns:
+            if path and self._match_url_pattern(path, pattern):
+                return True
+            if full_url and self._match_url_pattern(full_url, pattern):
+                return True
+        
+        # Check regex patterns
+        for pattern in self.whitelist_regex_patterns:
+            try:
+                if re.search(pattern, full_url, re.IGNORECASE):
+                    return True
+            except re.error:
+                # Skip invalid regex patterns
+                continue
+        
+        return False
+    
+    def _match_pattern(self, text: str, pattern: str) -> bool:
+        """
+        Check if text matches a pattern (supports wildcards).
+        
+        Args:
+            text: Text to match
+            pattern: Pattern with optional wildcards (*)
+            
+        Returns:
+            True if text matches pattern
+        """
+        if not pattern:
+            return False
+        
+        # Convert pattern to regex
+        regex_pattern = pattern.replace('.', r'\.').replace('*', '.*')
+        
+        try:
+            return bool(re.match(f'^{regex_pattern}$', text, re.IGNORECASE))
+        except re.error:
+            return False
+    
+    def _match_url_pattern(self, text: str, pattern: str) -> bool:
+        """
+        Check if text matches a URL pattern (supports wildcards).
+        
+        Args:
+            text: Text to match
+            pattern: URL pattern with optional wildcards (*)
+            
+        Returns:
+            True if text matches pattern
+        """
+        if not pattern:
+            return False
+        
+        # Convert pattern to regex (escape special chars, handle wildcards)
+        regex_pattern = pattern.replace('.', r'\.').replace('*', '.*')
+        
+        try:
+            return bool(re.search(regex_pattern, text, re.IGNORECASE))
+        except re.error:
+            return False
+    
+    def add_whitelist_domain(self, domain: str):
+        """Add a domain to the whitelist."""
+        if domain:
+            self.whitelist_domains.add(domain)
+    
+    def remove_whitelist_domain(self, domain: str):
+        """Remove a domain from the whitelist."""
+        self.whitelist_domains.discard(domain)
+    
+    def add_whitelist_url_pattern(self, pattern: str):
+        """Add a URL pattern to the whitelist."""
+        if pattern and pattern not in self.whitelist_url_patterns:
+            self.whitelist_url_patterns.append(pattern)
+    
+    def remove_whitelist_url_pattern(self, pattern: str):
+        """Remove a URL pattern from the whitelist."""
+        if pattern in self.whitelist_url_patterns:
+            self.whitelist_url_patterns.remove(pattern)
+    
+    def add_whitelist_domain_pattern(self, pattern: str):
+        """Add a domain pattern to the whitelist."""
+        if pattern and pattern not in self.whitelist_domain_patterns:
+            self.whitelist_domain_patterns.append(pattern)
+    
+    def remove_whitelist_domain_pattern(self, pattern: str):
+        """Remove a domain pattern from the whitelist."""
+        if pattern in self.whitelist_domain_patterns:
+            self.whitelist_domain_patterns.remove(pattern)
+    
+    def clear_whitelist(self):
+        """Clear all whitelist entries."""
+        self.whitelist_domains.clear()
+        self.whitelist_url_patterns.clear()
+        self.whitelist_regex_patterns.clear()
+        self.whitelist_domain_patterns.clear()
 
 
 def generate_dataset(
     parser: AdBlockListParser,
     max_samples_per_class: Optional[int] = None,
     balance_dataset: bool = True,
+    use_whitelist: bool = True,
     seed: Optional[int] = None
 ) -> List[Tuple[str, int]]:
     """
     Generate labeled dataset from parsed Adblock Plus lists.
     
     Creates a balanced dataset with positive samples (ads=1) from blocked patterns
-    and negative samples (legitimate=0) from common legitimate domains.
+    and negative samples (legitimate=0) from common legitimate domains and whitelist entries.
     
     Args:
         parser: AdBlockListParser instance with parsed lists
@@ -308,6 +563,8 @@ def generate_dataset(
                               If None, uses all available samples.
         balance_dataset: If True, ensures equal number of positive and negative samples.
                         If False, uses all available samples.
+        use_whitelist: If True, includes whitelist entries as negative samples (legitimate).
+                       This helps refine the model by using known whitelist entries.
         seed: Random seed for reproducibility (for shuffling and sampling)
         
     Returns:
@@ -363,6 +620,35 @@ def generate_dataset(
                        '/docs', '/api', '/blog', '/news', '/products']
         for path in common_paths[:3]:  # Limit to first 3 paths per domain
             negative_samples.append((f"https://{domain}{path}", 0))
+    
+    # Add whitelist entries as negative samples (legitimate) if enabled
+    if use_whitelist:
+        whitelist_samples = []
+        
+        # Add whitelist domains
+        for domain in parser.whitelist_domains:
+            whitelist_samples.append((domain, 0))
+            whitelist_samples.append((f"http://{domain}", 0))
+            whitelist_samples.append((f"https://{domain}", 0))
+        
+        # Add whitelist domain patterns (use as-is)
+        for pattern in parser.whitelist_domain_patterns:
+            whitelist_samples.append((pattern, 0))
+            whitelist_samples.append((f"https://{pattern}", 0))
+        
+        # Add whitelist URL patterns (create sample URLs)
+        for pattern in parser.whitelist_url_patterns:
+            # Create sample URLs using placeholder domain
+            whitelist_samples.append((f"https://example.com{pattern}", 0))
+        
+        # Limit whitelist samples if needed
+        if max_samples_per_class and len(whitelist_samples) > 0:
+            # Use up to 30% of max_samples_per_class for whitelist entries
+            max_whitelist = int(max_samples_per_class * 0.3)
+            if len(whitelist_samples) > max_whitelist:
+                whitelist_samples = random.sample(whitelist_samples, max_whitelist)
+        
+        negative_samples.extend(whitelist_samples)
     
     # If we still need more negative samples and max_samples_per_class is set,
     # generate more from legitimate domain patterns
@@ -1072,19 +1358,22 @@ class AdBlockerModel:
     as ads (1) or legitimate (0) based on extracted features.
     """
     
-    def __init__(self, input_dim: int = 25, hidden_units: Optional[List[int]] = None):
+    def __init__(self, input_dim: int = 25, hidden_units: Optional[List[int]] = None, whitelist_parser: Optional[AdBlockListParser] = None):
         """
         Initialize the AdBlocker model.
         
         Args:
             input_dim: Number of input features (default 25 for URL features, 8 for domain-only)
             hidden_units: List of hidden layer sizes. If None, uses default [64, 32]
+            whitelist_parser: Optional AdBlockListParser instance with whitelist rules.
+                            If provided, whitelisted URLs/domains will always be classified as legitimate.
         """
         self.input_dim = input_dim
         self.hidden_units = hidden_units if hidden_units is not None else [64, 32]
         self.model: Optional[tf.keras.Model] = None
         self.feature_extractor = FeatureExtractor()
         self.is_trained = False
+        self.whitelist_parser = whitelist_parser
     
     def build_model(self) -> tf.keras.Model:
         """
@@ -1239,6 +1528,10 @@ class AdBlockerModel:
         if not self.is_trained:
             raise ValueError("Model has not been trained. Call train() first.")
         
+        # Check whitelist first - whitelisted URLs/domains are always legitimate
+        if self.whitelist_parser and self.whitelist_parser.is_whitelisted(url_or_domain):
+            return (0, 0.0)  # Always return legitimate with 0 confidence (overridden by whitelist)
+        
         # Extract features
         # Try URL features first (25 features), fall back to domain features (8 features)
         if '/' in url_or_domain or url_or_domain.startswith('http'):
@@ -1285,6 +1578,14 @@ class AdBlockerModel:
         if not self.is_trained:
             raise ValueError("Model has not been trained. Call train() first.")
         
+        # Check whitelist for all samples first
+        whitelist_mask = []
+        if self.whitelist_parser:
+            whitelist_mask = [self.whitelist_parser.is_whitelisted(url_or_domain) 
+                             for url_or_domain in urls_or_domains]
+        else:
+            whitelist_mask = [False] * len(urls_or_domains)
+        
         # Extract features for all samples
         features_list = []
         for url_or_domain in urls_or_domains:
@@ -1313,7 +1614,14 @@ class AdBlockerModel:
         
         # Predict
         confidences = self.model.predict(X_batch, verbose=0).flatten()
-        predictions = [(1 if conf >= threshold else 0, float(conf)) for conf in confidences]
+        predictions = []
+        
+        # Apply whitelist mask - whitelisted URLs are always legitimate
+        for i, conf in enumerate(confidences):
+            if whitelist_mask[i]:
+                predictions.append((0, 0.0))  # Always legitimate, 0 confidence (overridden by whitelist)
+            else:
+                predictions.append((1 if conf >= threshold else 0, float(conf)))
         
         return predictions
     
