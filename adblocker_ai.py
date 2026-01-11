@@ -794,6 +794,362 @@ class FeatureExtractor:
         return feature_vector
 
 
+class F1Score(tf.keras.metrics.Metric):
+    """
+    Custom F1-score metric for binary classification.
+    
+    F1-score is the harmonic mean of precision and recall:
+    F1 = 2 * (precision * recall) / (precision + recall)
+    """
+    
+    def __init__(self, name='f1_score', threshold=0.5, **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.threshold = threshold
+        self.precision = tf.keras.metrics.Precision(thresholds=threshold)
+        self.recall = tf.keras.metrics.Recall(thresholds=threshold)
+    
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        self.precision.update_state(y_true, y_pred, sample_weight)
+        self.recall.update_state(y_true, y_pred, sample_weight)
+    
+    def result(self):
+        p = self.precision.result()
+        r = self.recall.result()
+        return 2 * ((p * r) / (p + r + tf.keras.backend.epsilon()))
+    
+    def reset_state(self):
+        self.precision.reset_state()
+        self.recall.reset_state()
+
+
+class AdBlockerModel:
+    """
+    TensorFlow/Keras binary classifier for ad blocking.
+    
+    This class implements a neural network model that classifies URLs and domains
+    as ads (1) or legitimate (0) based on extracted features.
+    """
+    
+    def __init__(self, input_dim: int = 25, hidden_units: Optional[List[int]] = None):
+        """
+        Initialize the AdBlocker model.
+        
+        Args:
+            input_dim: Number of input features (default 25 for URL features, 8 for domain-only)
+            hidden_units: List of hidden layer sizes. If None, uses default [64, 32]
+        """
+        self.input_dim = input_dim
+        self.hidden_units = hidden_units if hidden_units is not None else [64, 32]
+        self.model: Optional[tf.keras.Model] = None
+        self.feature_extractor = FeatureExtractor()
+        self.is_trained = False
+    
+    def build_model(self) -> tf.keras.Model:
+        """
+        Build the TensorFlow/Keras model architecture.
+        
+        Architecture:
+        - Input Layer: Dense layer with input_dim features
+        - Hidden Layers: 2-3 dense layers with ReLU activation
+        - Output Layer: Single neuron with sigmoid activation (binary classification)
+        - Loss: Binary crossentropy
+        - Optimizer: Adam
+        - Metrics: Accuracy, Precision, Recall, F1-score
+        
+        Returns:
+            Compiled Keras model
+        """
+        model = tf.keras.Sequential()
+        
+        # Input layer (first hidden layer)
+        model.add(tf.keras.layers.Dense(
+            units=self.hidden_units[0],
+            activation='relu',
+            input_shape=(self.input_dim,),
+            name='input_layer'
+        ))
+        
+        # Add dropout for regularization
+        model.add(tf.keras.layers.Dropout(0.2, name='dropout_0'))
+        
+        # Additional hidden layers
+        for i, units in enumerate(self.hidden_units[1:], start=1):
+            model.add(tf.keras.layers.Dense(
+                units=units,
+                activation='relu',
+                name=f'hidden_layer_{i}'
+            ))
+            model.add(tf.keras.layers.Dropout(0.2, name=f'dropout_{i}'))
+        
+        # Output layer: single neuron with sigmoid activation
+        model.add(tf.keras.layers.Dense(
+            units=1,
+            activation='sigmoid',
+            name='output_layer'
+        ))
+        
+        # Compile model
+        model.compile(
+            optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+            loss='binary_crossentropy',
+            metrics=[
+                'accuracy',
+                tf.keras.metrics.Precision(name='precision'),
+                tf.keras.metrics.Recall(name='recall'),
+                F1Score(name='f1_score')
+            ]
+        )
+        
+        self.model = model
+        return model
+    
+    def train(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        validation_data: Optional[Tuple[np.ndarray, np.ndarray]] = None,
+        epochs: int = 50,
+        batch_size: int = 32,
+        verbose: int = 1,
+        callbacks: Optional[List[tf.keras.callbacks.Callback]] = None
+    ) -> tf.keras.callbacks.History:
+        """
+        Train the model.
+        
+        Args:
+            X: Training features (numpy array of shape (n_samples, n_features))
+            y: Training labels (numpy array of shape (n_samples,) with values 0 or 1)
+            validation_data: Optional tuple (X_val, y_val) for validation set
+            epochs: Number of training epochs
+            batch_size: Batch size for training
+            verbose: Verbosity mode (0=silent, 1=progress bar, 2=one line per epoch)
+            callbacks: Optional list of Keras callbacks
+            
+        Returns:
+            Training history object
+        """
+        # Build model if not already built
+        if self.model is None:
+            self.build_model()
+        
+        # Convert inputs to numpy arrays if needed
+        X = np.asarray(X, dtype=np.float32)
+        y = np.asarray(y, dtype=np.float32)
+        
+        # Validate input shapes
+        if X.ndim != 2:
+            raise ValueError(f"X must be 2D array, got shape {X.shape}")
+        if X.shape[0] != y.shape[0]:
+            raise ValueError(f"X and y must have same number of samples: {X.shape[0]} != {y.shape[0]}")
+        if X.shape[1] != self.input_dim:
+            raise ValueError(f"X feature dimension {X.shape[1]} does not match model input_dim {self.input_dim}")
+        
+        # Set up callbacks
+        if callbacks is None:
+            callbacks = [
+                tf.keras.callbacks.EarlyStopping(
+                    monitor='val_loss' if validation_data else 'loss',
+                    patience=10,
+                    restore_best_weights=True,
+                    verbose=1
+                ),
+                tf.keras.callbacks.ReduceLROnPlateau(
+                    monitor='val_loss' if validation_data else 'loss',
+                    factor=0.5,
+                    patience=5,
+                    min_lr=1e-6,
+                    verbose=1
+                )
+            ]
+        
+        # Train the model
+        history = self.model.fit(
+            X,
+            y,
+            validation_data=validation_data,
+            epochs=epochs,
+            batch_size=batch_size,
+            verbose=verbose,
+            callbacks=callbacks
+        )
+        
+        self.is_trained = True
+        return history
+    
+    def predict(self, url_or_domain: str, threshold: float = 0.5) -> Tuple[int, float]:
+        """
+        Predict whether a URL or domain is an ad.
+        
+        Args:
+            url_or_domain: URL or domain string to classify
+            threshold: Classification threshold (default 0.5)
+            
+        Returns:
+            Tuple of (prediction, confidence) where:
+            - prediction: 0 (legitimate) or 1 (ad)
+            - confidence: Model's confidence score (probability)
+        """
+        if self.model is None:
+            raise ValueError("Model has not been built. Call build_model() or load_model() first.")
+        
+        if not self.is_trained:
+            raise ValueError("Model has not been trained. Call train() first.")
+        
+        # Extract features
+        # Try URL features first (25 features), fall back to domain features (8 features)
+        if '/' in url_or_domain or url_or_domain.startswith('http'):
+            features = self.feature_extractor.extract_url_features(url_or_domain)
+            if self.input_dim == 8:
+                # Model expects domain features, use domain-only extractor
+                features = self.feature_extractor.extract_domain_features(url_or_domain)
+        else:
+            features = self.feature_extractor.extract_domain_features(url_or_domain)
+            if self.input_dim == 25:
+                # Model expects URL features, use URL extractor (will pad if needed)
+                features = self.feature_extractor.extract_url_features(url_or_domain)
+        
+        # Ensure feature dimension matches model input
+        if features.shape[0] != self.input_dim:
+            raise ValueError(
+                f"Feature dimension {features.shape[0]} does not match model input_dim {self.input_dim}. "
+                f"Use appropriate FeatureExtractor method or adjust model input_dim."
+            )
+        
+        # Reshape for single sample
+        features = features.reshape(1, -1)
+        
+        # Predict
+        confidence = float(self.model.predict(features, verbose=0)[0][0])
+        prediction = 1 if confidence >= threshold else 0
+        
+        return prediction, confidence
+    
+    def predict_batch(self, urls_or_domains: List[str], threshold: float = 0.5) -> List[Tuple[int, float]]:
+        """
+        Predict on a batch of URLs or domains.
+        
+        Args:
+            urls_or_domains: List of URL or domain strings to classify
+            threshold: Classification threshold (default 0.5)
+            
+        Returns:
+            List of tuples (prediction, confidence) for each input
+        """
+        if self.model is None:
+            raise ValueError("Model has not been built. Call build_model() or load_model() first.")
+        
+        if not self.is_trained:
+            raise ValueError("Model has not been trained. Call train() first.")
+        
+        # Extract features for all samples
+        features_list = []
+        for url_or_domain in urls_or_domains:
+            if '/' in url_or_domain or url_or_domain.startswith('http'):
+                features = self.feature_extractor.extract_url_features(url_or_domain)
+            else:
+                features = self.feature_extractor.extract_domain_features(url_or_domain)
+            
+            # Handle dimension mismatch
+            if features.shape[0] != self.input_dim:
+                if self.input_dim == 25 and features.shape[0] == 8:
+                    # Pad domain features to match URL features (not ideal, but workable)
+                    features = np.pad(features, (0, 25 - 8), 'constant')
+                elif self.input_dim == 8 and features.shape[0] == 25:
+                    # Use first 8 features (domain features are first 8)
+                    features = features[:8]
+                else:
+                    raise ValueError(
+                        f"Feature dimension {features.shape[0]} does not match model input_dim {self.input_dim}"
+                    )
+            
+            features_list.append(features)
+        
+        # Stack into batch
+        X_batch = np.array(features_list, dtype=np.float32)
+        
+        # Predict
+        confidences = self.model.predict(X_batch, verbose=0).flatten()
+        predictions = [(1 if conf >= threshold else 0, float(conf)) for conf in confidences]
+        
+        return predictions
+    
+    def save_model(self, path: str):
+        """
+        Save the trained model to disk.
+        
+        Args:
+            path: Directory path where to save the model (TensorFlow SavedModel format)
+        """
+        if self.model is None:
+            raise ValueError("Model has not been built. Nothing to save.")
+        
+        self.model.save(path)
+        print(f"Model saved to {path}")
+    
+    def load_model(self, path: str):
+        """
+        Load a saved model from disk.
+        
+        Args:
+            path: Directory path where the model is saved
+        """
+        try:
+            self.model = tf.keras.models.load_model(path)
+            # Infer input_dim from loaded model
+            input_shape = self.model.input_shape
+            if input_shape and len(input_shape) > 1:
+                self.input_dim = int(input_shape[1])
+            self.is_trained = True
+            print(f"Model loaded from {path}")
+        except Exception as e:
+            raise ValueError(f"Failed to load model from {path}: {e}")
+    
+    def get_model_summary(self) -> str:
+        """
+        Get a string summary of the model architecture.
+        
+        Returns:
+            Model summary as string
+        """
+        if self.model is None:
+            return "Model has not been built yet."
+        
+        from io import StringIO
+        import sys
+        
+        # Capture model summary
+        old_stdout = sys.stdout
+        sys.stdout = buffer = StringIO()
+        self.model.summary()
+        sys.stdout = old_stdout
+        
+        return buffer.getvalue()
+    
+    def evaluate(self, X: np.ndarray, y: np.ndarray, verbose: int = 1) -> dict:
+        """
+        Evaluate the model on test data.
+        
+        Args:
+            X: Test features (numpy array)
+            y: Test labels (numpy array)
+            verbose: Verbosity mode
+            
+        Returns:
+            Dictionary of evaluation metrics
+        """
+        if self.model is None:
+            raise ValueError("Model has not been built. Call build_model() or load_model() first.")
+        
+        if not self.is_trained:
+            raise ValueError("Model has not been trained. Call train() first.")
+        
+        X = np.asarray(X, dtype=np.float32)
+        y = np.asarray(y, dtype=np.float32)
+        
+        results = self.model.evaluate(X, y, verbose=verbose, return_dict=True)
+        return results
+
+
 # ============================================================================
 # RLHF/RLHP (Reinforcement Learning from Human Feedback/Preferences) Support
 # ============================================================================
