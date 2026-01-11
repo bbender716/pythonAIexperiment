@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ad-Blocker AI Management</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background-color: #f5f5f5;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        
+        h2 {
+            color: #555;
+            margin-top: 40px;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        .section {
+            margin-bottom: 40px;
+            padding: 20px;
+            background-color: #fafafa;
+            border-radius: 5px;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #333;
+        }
+        
+        input[type="text"], input[type="number"], select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-right: 10px;
+            margin-top: 10px;
+        }
+        
+        button:hover {
+            background-color: #45a049;
+        }
+        
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        
+        button.danger {
+            background-color: #f44336;
+        }
+        
+        button.danger:hover {
+            background-color: #da190b;
+        }
+        
+        button.secondary {
+            background-color: #2196F3;
+        }
+        
+        button.secondary:hover {
+            background-color: #0b7dda;
+        }
+        
+        .message {
+            padding: 12px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+        }
+        
+        .message.success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .message.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .message.info {
+            background-color: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        th {
+            background-color: #4CAF50;
+            color: white;
+            font-weight: 600;
+        }
+        
+        tr:hover {
+            background-color: #f5f5f5;
+        }
+        
+        .prediction-result {
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 15px;
+        }
+        
+        .prediction-result.ad {
+            background-color: #ffebee;
+            border: 2px solid #f44336;
+        }
+        
+        .prediction-result.legitimate {
+            background-color: #e8f5e9;
+            border: 2px solid #4CAF50;
+        }
+        
+        .prediction-label {
+            font-size: 20px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        
+        .confidence-bar {
+            height: 25px;
+            background-color: #e0e0e0;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+        
+        .confidence-fill {
+            height: 100%;
+            background-color: #4CAF50;
+            transition: width 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+        
+        .confidence-fill.ad {
+            background-color: #f44336;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+        
+        .status-badge.idle {
+            background-color: #e0e0e0;
+            color: #666;
+        }
+        
+        .status-badge.running {
+            background-color: #2196F3;
+            color: white;
+        }
+        
+        .status-badge.completed {
+            background-color: #4CAF50;
+            color: white;
+        }
+        
+        .status-badge.error {
+            background-color: #f44336;
+            color: white;
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        .feedback-form {
+            margin-top: 15px;
+            padding: 15px;
+            background-color: white;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+        }
+        
+        .radio-group {
+            margin: 10px 0;
+        }
+        
+        .radio-group label {
+            display: inline;
+            margin-left: 5px;
+            font-weight: normal;
+        }
+        
+        input[type="radio"] {
+            width: auto;
+            margin-right: 5px;
+        }
+        
+        .results-section {
+            margin-top: 20px;
+        }
+        
+        .metric {
+            display: inline-block;
+            margin: 10px 15px 10px 0;
+            padding: 10px 15px;
+            background-color: white;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+        }
+        
+        .metric-label {
+            font-size: 12px;
+            color: #666;
+            display: block;
+        }
+        
+        .metric-value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #4CAF50;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-left: 10px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Ad-Blocker AI Management</h1>
+        
+        <!-- Whitelist Management Section -->
+        <div class="section">
+            <h2>Whitelist Management</h2>
+            <div id="whitelist-message"></div>
+            <div class="form-group">
+                <label for="whitelist-url">Add URL or Domain to Whitelist:</label>
+                <input type="text" id="whitelist-url" placeholder="https://example.com or example.com">
+                <button onclick="addToWhitelist()">Add to Whitelist</button>
+            </div>
+            <div>
+                <strong>Total entries: <span id="whitelist-count">0</span></strong>
+            </div>
+            <table id="whitelist-table">
+                <thead>
+                    <tr>
+                        <th>Domain</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="whitelist-tbody">
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Training Section -->
+        <div class="section">
+            <h2>Model Training</h2>
+            <div id="training-message"></div>
+            <div class="form-group">
+                <label for="train-epochs">Epochs:</label>
+                <input type="number" id="train-epochs" value="50" min="1">
+            </div>
+            <div class="form-group">
+                <label for="train-batch-size">Batch Size:</label>
+                <input type="number" id="train-batch-size" value="32" min="1">
+            </div>
+            <div class="form-group">
+                <label for="train-max-samples">Max Samples per Class (optional):</label>
+                <input type="number" id="train-max-samples" min="1" placeholder="Leave empty for all">
+            </div>
+            <button onclick="startTraining()">Train Model</button>
+            <span id="training-status"></span>
+            <div id="training-results" class="results-section hidden"></div>
+        </div>
+        
+        <!-- URL Testing Section -->
+        <div class="section">
+            <h2>URL Testing</h2>
+            <div id="predict-message"></div>
+            <div class="form-group">
+                <label for="test-url">Test URL or Domain:</label>
+                <input type="text" id="test-url" placeholder="https://example.com or example.com">
+                <button onclick="testUrl()">Test URL</button>
+            </div>
+            <div id="prediction-result" class="hidden"></div>
+            <div id="feedback-form-container" class="hidden">
+                <div class="feedback-form">
+                    <h3>Provide Feedback</h3>
+                    <div class="radio-group">
+                        <input type="radio" id="feedback-correct" name="feedback" value="correct">
+                        <label for="feedback-correct">Model prediction is correct</label>
+                    </div>
+                    <div class="radio-group">
+                        <input type="radio" id="feedback-should-be-ad" name="feedback" value="should_be_ad">
+                        <label for="feedback-should-be-ad">Should be AD</label>
+                    </div>
+                    <div class="radio-group">
+                        <input type="radio" id="feedback-should-be-legitimate" name="feedback" value="should_be_legitimate">
+                        <label for="feedback-should-be-legitimate">Should be LEGITIMATE</label>
+                    </div>
+                    <button onclick="submitFeedback()">Submit Feedback</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- RLHF Feedback Section -->
+        <div class="section">
+            <h2>RLHF Feedback History</h2>
+            <div>
+                <strong>Total feedback: <span id="feedback-count">0</span></strong>
+                <strong style="margin-left: 20px;">Corrections: <span id="corrections-count">0</span></strong>
+                <button onclick="loadFeedback()" style="float: right;">Refresh</button>
+            </div>
+            <table id="feedback-table">
+                <thead>
+                    <tr>
+                        <th>URL/Domain</th>
+                        <th>Model Prediction</th>
+                        <th>Human Label</th>
+                        <th>Confidence</th>
+                        <th>Type</th>
+                        <th>Timestamp</th>
+                    </tr>
+                </thead>
+                <tbody id="feedback-tbody">
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <script>
+        let currentPrediction = null;
+        
+        // Load initial data
+        window.onload = function() {
+            loadWhitelist();
+            loadFeedback();
+            checkTrainingStatus();
+            checkModelStatus();
+        };
+        
+        // Whitelist functions
+        async function loadWhitelist() {
+            try {
+                const response = await fetch('/api/whitelist');
+                const data = await response.json();
+                if (data.success) {
+                    document.getElementById('whitelist-count').textContent = data.count;
+                    const tbody = document.getElementById('whitelist-tbody');
+                    tbody.innerHTML = '';
+                    data.domains.forEach(domain => {
+                        const row = tbody.insertRow();
+                        row.insertCell(0).textContent = domain;
+                        const actionsCell = row.insertCell(1);
+                        const deleteBtn = document.createElement('button');
+                        deleteBtn.textContent = 'Delete';
+                        deleteBtn.className = 'danger';
+                        deleteBtn.onclick = () => deleteFromWhitelist(domain);
+                        actionsCell.appendChild(deleteBtn);
+                    });
+                }
+            } catch (error) {
+                showMessage('whitelist-message', 'Error loading whitelist: ' + error.message, 'error');
+            }
+        }
+        
+        async function addToWhitelist() {
+            const url = document.getElementById('whitelist-url').value.trim();
+            if (!url) {
+                showMessage('whitelist-message', 'Please enter a URL or domain', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/whitelist', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url_or_domain: url })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    showMessage('whitelist-message', data.message, 'success');
+                    document.getElementById('whitelist-url').value = '';
+                    loadWhitelist();
+                } else {
+                    showMessage('whitelist-message', data.error, 'error');
+                }
+            } catch (error) {
+                showMessage('whitelist-message', 'Error: ' + error.message, 'error');
+            }
+        }
+        
+        async function deleteFromWhitelist(domain) {
+            if (!confirm(`Delete ${domain} from whitelist?`)) return;
+            
+            try {
+                const response = await fetch(`/api/whitelist/${encodeURIComponent(domain)}`, {
+                    method: 'DELETE'
+                });
+                const data = await response.json();
+                if (data.success) {
+                    showMessage('whitelist-message', data.message, 'success');
+                    loadWhitelist();
+                } else {
+                    showMessage('whitelist-message', data.error, 'error');
+                }
+            } catch (error) {
+                showMessage('whitelist-message', 'Error: ' + error.message, 'error');
+            }
+        }
+        
+        // Training functions
+        async function startTraining() {
+            const epochs = parseInt(document.getElementById('train-epochs').value);
+            const batchSize = parseInt(document.getElementById('train-batch-size').value);
+            const maxSamples = document.getElementById('train-max-samples').value;
+            const params = {
+                epochs: epochs,
+                batch_size: batchSize
+            };
+            if (maxSamples) params.max_samples = parseInt(maxSamples);
+            
+            try {
+                const response = await fetch('/api/train', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(params)
+                });
+                const data = await response.json();
+                if (data.success) {
+                    showMessage('training-message', 'Training started', 'info');
+                    checkTrainingStatus();
+                } else {
+                    showMessage('training-message', data.error, 'error');
+                }
+            } catch (error) {
+                showMessage('training-message', 'Error: ' + error.message, 'error');
+            }
+        }
+        
+        async function checkTrainingStatus() {
+            try {
+                const response = await fetch('/api/train/status');
+                const data = await response.json();
+                if (data.success) {
+                    const statusEl = document.getElementById('training-status');
+                    statusEl.innerHTML = `<span class="status-badge ${data.status}">${data.status.toUpperCase()}</span>`;
+                    if (data.status === 'running') {
+                        statusEl.innerHTML += '<span class="loading"></span>';
+                        setTimeout(checkTrainingStatus, 2000);
+                    } else if (data.status === 'completed' || data.status === 'error') {
+                        loadTrainingResults();
+                    }
+                }
+            } catch (error) {
+                console.error('Error checking training status:', error);
+            }
+        }
+        
+        async function loadTrainingResults() {
+            try {
+                const response = await fetch('/api/train/results');
+                const data = await response.json();
+                if (data.success && data.results) {
+                    const resultsDiv = document.getElementById('training-results');
+                    resultsDiv.classList.remove('hidden');
+                    let html = '<h3>Training Results</h3>';
+                    if (data.results.metrics) {
+                        html += '<div class="metrics">';
+                        for (const [key, value] of Object.entries(data.results.metrics)) {
+                            html += `<div class="metric">
+                                <span class="metric-label">${key}</span>
+                                <span class="metric-value">${value.toFixed(4)}</span>
+                            </div>`;
+                        }
+                        html += '</div>';
+                    }
+                    if (data.results.predictions && data.results.predictions.length > 0) {
+                        html += '<h4>Sample Predictions:</h4><ul>';
+                        data.results.predictions.forEach(pred => {
+                            html += `<li>${pred.url}: ${pred.prediction} (confidence: ${pred.confidence.toFixed(4)})</li>`;
+                        });
+                        html += '</ul>';
+                    }
+                    resultsDiv.innerHTML = html;
+                }
+            } catch (error) {
+                console.error('Error loading training results:', error);
+            }
+        }
+        
+        // URL Testing functions
+        async function testUrl() {
+            const url = document.getElementById('test-url').value.trim();
+            if (!url) {
+                showMessage('predict-message', 'Please enter a URL', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/predict', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: url })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    currentPrediction = data;
+                    displayPrediction(data);
+                    document.getElementById('feedback-form-container').classList.remove('hidden');
+                    // Reset radio buttons
+                    document.querySelectorAll('input[name="feedback"]').forEach(r => r.checked = false);
+                } else {
+                    showMessage('predict-message', data.error, 'error');
+                    document.getElementById('prediction-result').classList.add('hidden');
+                    document.getElementById('feedback-form-container').classList.add('hidden');
+                }
+            } catch (error) {
+                showMessage('predict-message', 'Error: ' + error.message, 'error');
+            }
+        }
+        
+        function displayPrediction(data) {
+            const resultDiv = document.getElementById('prediction-result');
+            resultDiv.classList.remove('hidden');
+            const isAd = data.prediction === 1;
+            const confidencePercent = (data.confidence * 100).toFixed(2);
+            resultDiv.className = `prediction-result ${isAd ? 'ad' : 'legitimate'}`;
+            resultDiv.innerHTML = `
+                <div class="prediction-label">${data.label}</div>
+                <div>URL: ${data.url}</div>
+                <div>Confidence: ${confidencePercent}%</div>
+                <div class="confidence-bar">
+                    <div class="confidence-fill ${isAd ? 'ad' : ''}" style="width: ${confidencePercent}%">
+                        ${confidencePercent}%
+                    </div>
+                </div>
+            `;
+        }
+        
+        async function submitFeedback() {
+            if (!currentPrediction) return;
+            
+            const feedbackRadio = document.querySelector('input[name="feedback"]:checked');
+            if (!feedbackRadio) {
+                showMessage('predict-message', 'Please select a feedback option', 'error');
+                return;
+            }
+            
+            let humanLabel = currentPrediction.prediction;
+            if (feedbackRadio.value === 'should_be_ad') {
+                humanLabel = 1;
+            } else if (feedbackRadio.value === 'should_be_legitimate') {
+                humanLabel = 0;
+            }
+            // If 'correct', humanLabel stays as currentPrediction.prediction
+            
+            try {
+                const response = await fetch('/api/feedback', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        url: currentPrediction.url,
+                        model_prediction: currentPrediction.prediction,
+                        human_label: humanLabel,
+                        confidence: currentPrediction.confidence
+                    })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    showMessage('predict-message', 'Feedback submitted successfully', 'success');
+                    document.getElementById('feedback-form-container').classList.add('hidden');
+                    loadFeedback();
+                } else {
+                    showMessage('predict-message', data.error, 'error');
+                }
+            } catch (error) {
+                showMessage('predict-message', 'Error: ' + error.message, 'error');
+            }
+        }
+        
+        // Feedback functions
+        async function loadFeedback() {
+            try {
+                const response = await fetch('/api/feedback?limit=50');
+                const data = await response.json();
+                if (data.success) {
+                    document.getElementById('feedback-count').textContent = data.total_count;
+                    document.getElementById('corrections-count').textContent = data.corrections_count;
+                    const tbody = document.getElementById('feedback-tbody');
+                    tbody.innerHTML = '';
+                    data.feedback.forEach(f => {
+                        const row = tbody.insertRow();
+                        row.insertCell(0).textContent = f.url_or_domain;
+                        row.insertCell(1).textContent = f.model_prediction === 1 ? 'AD' : 'LEGITIMATE';
+                        row.insertCell(2).textContent = f.human_label === 1 ? 'AD' : 'LEGITIMATE';
+                        row.insertCell(3).textContent = f.confidence !== null ? (f.confidence * 100).toFixed(2) + '%' : 'N/A';
+                        row.insertCell(4).textContent = f.feedback_type;
+                        row.insertCell(5).textContent = f.timestamp ? new Date(f.timestamp).toLocaleString() : 'N/A';
+                        if (f.model_prediction !== f.human_label) {
+                            row.style.backgroundColor = '#fff3cd';
+                        }
+                    });
+                }
+            } catch (error) {
+                console.error('Error loading feedback:', error);
+            }
+        }
+        
+        async function checkModelStatus() {
+            try {
+                const response = await fetch('/api/model/status');
+                const data = await response.json();
+                if (!data.loaded) {
+                    showMessage('predict-message', 'Model not loaded. Please train a model first.', 'info');
+                }
+            } catch (error) {
+                console.error('Error checking model status:', error);
+            }
+        }
+        
+        function showMessage(elementId, message, type) {
+            const msgDiv = document.getElementById(elementId);
+            msgDiv.className = `message ${type}`;
+            msgDiv.textContent = message;
+            setTimeout(() => {
+                msgDiv.textContent = '';
+                msgDiv.className = '';
+            }, 5000);
+        }
+    </script>
+</body>
+</html>
