@@ -355,18 +355,14 @@
             <div id="prediction-result" class="hidden"></div>
             <div id="feedback-form-container" class="hidden">
                 <div class="feedback-form">
-                    <h3>Provide Feedback</h3>
+                    <h3>Classify as AD or Not an AD</h3>
                     <div class="radio-group">
-                        <input type="radio" id="feedback-correct" name="feedback" value="correct">
-                        <label for="feedback-correct">Model prediction is correct</label>
+                        <input type="radio" id="feedback-is-ad" name="feedback" value="is_ad">
+                        <label for="feedback-is-ad">AD</label>
                     </div>
                     <div class="radio-group">
-                        <input type="radio" id="feedback-should-be-ad" name="feedback" value="should_be_ad">
-                        <label for="feedback-should-be-ad">Should be AD</label>
-                    </div>
-                    <div class="radio-group">
-                        <input type="radio" id="feedback-should-be-legitimate" name="feedback" value="should_be_legitimate">
-                        <label for="feedback-should-be-legitimate">Should be LEGITIMATE</label>
+                        <input type="radio" id="feedback-not-ad" name="feedback" value="not_ad">
+                        <label for="feedback-not-ad">Not an AD</label>
                     </div>
                     <button onclick="submitFeedback()">Submit Feedback</button>
                 </div>
@@ -567,45 +563,109 @@
                 return;
             }
             
+            // Clear previous results and show loading state
+            const resultDiv = document.getElementById('prediction-result');
+            const feedbackContainer = document.getElementById('feedback-form-container');
+            if (resultDiv) resultDiv.classList.add('hidden');
+            if (feedbackContainer) feedbackContainer.classList.add('hidden');
+            showMessage('predict-message', 'Testing URL...', 'info');
+            
             try {
                 const response = await fetch('/api/predict', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ url: url })
                 });
-                const data = await response.json();
-                if (data.success) {
+                
+                console.log('Response status:', response.status);
+                console.log('Response ok:', response.ok);
+                
+                let data;
+                try {
+                    const responseText = await response.text();
+                    console.log('Response text:', responseText);
+                    data = JSON.parse(responseText);
+                    console.log('Parsed response data:', data);
+                    console.log('data.success:', data.success);
+                    console.log('typeof data.success:', typeof data.success);
+                } catch (parseError) {
+                    showMessage('predict-message', 'Error parsing response from server', 'error');
+                    console.error('Parse error:', parseError);
+                    console.error('Response status:', response.status);
+                    return;
+                }
+                
+                console.log('Checking data.success:', data.success);
+                console.log('data.success === true:', data.success === true);
+                if (data.success === true) {
+                    console.log('data.success is true, calling displayPrediction');
                     currentPrediction = data;
                     displayPrediction(data);
-                    document.getElementById('feedback-form-container').classList.remove('hidden');
+                    const feedbackContainer = document.getElementById('feedback-form-container');
+                    if (feedbackContainer) {
+                        feedbackContainer.classList.remove('hidden');
+                    }
                     // Reset radio buttons
                     document.querySelectorAll('input[name="feedback"]').forEach(r => r.checked = false);
+                    // Clear the loading message
+                    const msgDiv = document.getElementById('predict-message');
+                    if (msgDiv) {
+                        msgDiv.textContent = '';
+                        msgDiv.className = '';
+                    }
                 } else {
-                    showMessage('predict-message', data.error, 'error');
-                    document.getElementById('prediction-result').classList.add('hidden');
-                    document.getElementById('feedback-form-container').classList.add('hidden');
+                    console.log('data.success is false, showing error');
+                    console.log('Error message:', data.error);
+                    showMessage('predict-message', data.error || 'Unknown error occurred', 'error');
+                    if (resultDiv) resultDiv.classList.add('hidden');
+                    if (feedbackContainer) feedbackContainer.classList.add('hidden');
                 }
             } catch (error) {
                 showMessage('predict-message', 'Error: ' + error.message, 'error');
+                console.error('Test URL error:', error);
+                const resultDiv = document.getElementById('prediction-result');
+                const feedbackContainer = document.getElementById('feedback-form-container');
+                if (resultDiv) resultDiv.classList.add('hidden');
+                if (feedbackContainer) feedbackContainer.classList.add('hidden');
             }
         }
         
         function displayPrediction(data) {
-            const resultDiv = document.getElementById('prediction-result');
-            resultDiv.classList.remove('hidden');
-            const isAd = data.prediction === 1;
-            const confidencePercent = (data.confidence * 100).toFixed(2);
-            resultDiv.className = `prediction-result ${isAd ? 'ad' : 'legitimate'}`;
-            resultDiv.innerHTML = `
-                <div class="prediction-label">${data.label}</div>
-                <div>URL: ${data.url}</div>
-                <div>Confidence: ${confidencePercent}%</div>
-                <div class="confidence-bar">
-                    <div class="confidence-fill ${isAd ? 'ad' : ''}" style="width: ${confidencePercent}%">
-                        ${confidencePercent}%
+            try {
+                console.log('Displaying prediction:', data);
+                const resultDiv = document.getElementById('prediction-result');
+                if (!resultDiv) {
+                    console.error('prediction-result div not found!');
+                    showMessage('predict-message', 'Error: prediction result element not found', 'error');
+                    return;
+                }
+                
+                if (!data) {
+                    console.error('No data provided to displayPrediction');
+                    showMessage('predict-message', 'Error: No prediction data received', 'error');
+                    return;
+                }
+                
+                resultDiv.classList.remove('hidden');
+                const isAd = (data.prediction === 1 || data.prediction === '1');
+                const confidence = data.confidence !== undefined && data.confidence !== null ? data.confidence : 0;
+                const confidencePercent = (confidence * 100).toFixed(2);
+                resultDiv.className = `prediction-result ${isAd ? 'ad' : 'legitimate'}`;
+                resultDiv.innerHTML = `
+                    <div class="prediction-label">${data.label || (isAd ? 'AD' : 'LEGITIMATE')}</div>
+                    <div>URL: ${data.url || 'N/A'}</div>
+                    <div>Confidence: ${confidencePercent}%</div>
+                    <div class="confidence-bar">
+                        <div class="confidence-fill ${isAd ? 'ad' : ''}" style="width: ${confidencePercent}%">
+                            ${confidencePercent}%
+                        </div>
                     </div>
-                </div>
-            `;
+                `;
+                console.log('Prediction displayed successfully');
+            } catch (error) {
+                console.error('Error in displayPrediction:', error);
+                showMessage('predict-message', 'Error displaying prediction: ' + error.message, 'error');
+            }
         }
         
         async function submitFeedback() {
@@ -613,17 +673,17 @@
             
             const feedbackRadio = document.querySelector('input[name="feedback"]:checked');
             if (!feedbackRadio) {
-                showMessage('predict-message', 'Please select a feedback option', 'error');
+                showMessage('predict-message', 'Please select AD or Not an AD', 'error');
                 return;
             }
             
-            let humanLabel = currentPrediction.prediction;
-            if (feedbackRadio.value === 'should_be_ad') {
-                humanLabel = 1;
-            } else if (feedbackRadio.value === 'should_be_legitimate') {
-                humanLabel = 0;
+            // Set human label based on feedback selection
+            let humanLabel = 0; // Default to "Not an AD" (0 = LEGITIMATE)
+            if (feedbackRadio.value === 'is_ad') {
+                humanLabel = 1; // AD
+            } else if (feedbackRadio.value === 'not_ad') {
+                humanLabel = 0; // Not an AD (LEGITIMATE)
             }
-            // If 'correct', humanLabel stays as currentPrediction.prediction
             
             try {
                 const response = await fetch('/api/feedback', {
