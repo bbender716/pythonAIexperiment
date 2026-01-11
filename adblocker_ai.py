@@ -290,6 +290,118 @@ class AdBlockListParser:
         return self.domain_patterns.copy()
 
 
+def generate_dataset(
+    parser: AdBlockListParser,
+    max_samples_per_class: Optional[int] = None,
+    balance_dataset: bool = True,
+    seed: Optional[int] = None
+) -> List[Tuple[str, int]]:
+    """
+    Generate labeled dataset from parsed Adblock Plus lists.
+    
+    Creates a balanced dataset with positive samples (ads=1) from blocked patterns
+    and negative samples (legitimate=0) from common legitimate domains.
+    
+    Args:
+        parser: AdBlockListParser instance with parsed lists
+        max_samples_per_class: Maximum number of samples per class (ads/legitimate).
+                              If None, uses all available samples.
+        balance_dataset: If True, ensures equal number of positive and negative samples.
+                        If False, uses all available samples.
+        seed: Random seed for reproducibility (for shuffling and sampling)
+        
+    Returns:
+        List of tuples (url_or_domain, label) where label is 1 for ads, 0 for legitimate
+    """
+    import random
+    
+    if seed is not None:
+        random.seed(seed)
+    
+    # Common legitimate domains for negative samples
+    # These are well-known legitimate websites that should not be blocked
+    LEGITIMATE_DOMAINS = [
+        # Major platforms
+        'google.com', 'github.com', 'stackoverflow.com', 'wikipedia.org',
+        'youtube.com', 'reddit.com', 'twitter.com', 'facebook.com',
+        'microsoft.com', 'apple.com', 'amazon.com', 'netflix.com',
+        # News and media
+        'bbc.com', 'cnn.com', 'nytimes.com', 'reuters.com', 'theguardian.com',
+        # Educational
+        'edu', 'mit.edu', 'stanford.edu', 'harvard.edu', 'coursera.org',
+        # Technology
+        'mozilla.org', 'python.org', 'numpy.org', 'pytorch.org',
+        'tensorflow.org', 'keras.io', 'jupyter.org',
+        # General legitimate patterns
+        'example.com', 'example.org', 'example.net',
+        # Government
+        'gov', 'usa.gov', 'europa.eu',
+    ]
+    
+    # Generate positive samples (ads) from parsed lists
+    positive_samples = parser.generate_positive_samples(max_samples=max_samples_per_class)
+    
+    # Generate negative samples (legitimate)
+    negative_samples = []
+    
+    # Use legitimate domains
+    legitimate_list = LEGITIMATE_DOMAINS.copy()
+    if max_samples_per_class:
+        # If we need to limit samples, take a subset
+        if len(legitimate_list) > max_samples_per_class:
+            legitimate_list = random.sample(legitimate_list, max_samples_per_class)
+    
+    for domain in legitimate_list:
+        # Add domain as-is
+        negative_samples.append((domain, 0))
+        # Add with protocols
+        negative_samples.append((f"http://{domain}", 0))
+        negative_samples.append((f"https://{domain}", 0))
+        
+        # Add with common paths (simulating legitimate URLs)
+        common_paths = ['/', '/index.html', '/about', '/contact', '/help', 
+                       '/docs', '/api', '/blog', '/news', '/products']
+        for path in common_paths[:3]:  # Limit to first 3 paths per domain
+            negative_samples.append((f"https://{domain}{path}", 0))
+    
+    # If we still need more negative samples and max_samples_per_class is set,
+    # generate more from legitimate domain patterns
+    if max_samples_per_class and len(negative_samples) < max_samples_per_class:
+        # Generate additional legitimate domain patterns
+        legitimate_tlds = ['com', 'org', 'net', 'edu', 'gov', 'io', 'co']
+        legitimate_names = ['company', 'business', 'services', 'support', 'info',
+                          'main', 'www', 'shop', 'store', 'blog', 'news', 'help']
+        
+        remaining = max_samples_per_class - len(negative_samples)
+        for i in range(min(remaining, 50)):  # Limit additional generation
+            tld = random.choice(legitimate_tlds)
+            name = random.choice(legitimate_names)
+            domain = f"{name}.{tld}"
+            negative_samples.append((domain, 0))
+            negative_samples.append((f"https://{domain}", 0))
+    
+    # Limit negative samples if max_samples_per_class is set
+    if max_samples_per_class and len(negative_samples) > max_samples_per_class:
+        negative_samples = random.sample(negative_samples, max_samples_per_class)
+    
+    # Balance dataset if requested
+    if balance_dataset:
+        min_samples = min(len(positive_samples), len(negative_samples))
+        # Sample equal number from each class (only if we have samples)
+        if min_samples > 0:
+            positive_samples = random.sample(positive_samples, min_samples)
+            negative_samples = random.sample(negative_samples, min_samples)
+        else:
+            # If either class is empty, return empty dataset
+            return []
+    
+    # Combine and shuffle
+    dataset = positive_samples + negative_samples
+    random.shuffle(dataset)
+    
+    return dataset
+
+
 class FeatureExtractor:
     """
     Feature extraction from URLs and domains.
@@ -680,3 +792,358 @@ class FeatureExtractor:
         feature_vector = np.clip(feature_vector / max_values, 0.0, 1.0)
         
         return feature_vector
+
+
+# ============================================================================
+# RLHF/RLHP (Reinforcement Learning from Human Feedback/Preferences) Support
+# ============================================================================
+
+from dataclasses import dataclass
+from datetime import datetime
+from abc import ABC, abstractmethod
+import json
+
+
+@dataclass
+class HumanFeedback:
+    """
+    Data structure for storing human feedback/preferences.
+    
+    Used for RLHF/RLHP (Reinforcement Learning from Human Feedback/Preferences)
+    to collect and store human judgments about model predictions.
+    
+    Attributes:
+        url_or_domain: The URL or domain that was evaluated
+        model_prediction: The model's prediction (0=legitimate, 1=ad)
+        human_label: The human's label/feedback (0=legitimate, 1=ad)
+        confidence: Optional confidence score from the model
+        feedback_type: Type of feedback ('correction', 'preference', 'ranking')
+        timestamp: When the feedback was collected
+        user_id: Optional identifier for the user providing feedback
+        metadata: Optional additional metadata (dict)
+    """
+    url_or_domain: str
+    model_prediction: int
+    human_label: int
+    confidence: Optional[float] = None
+    feedback_type: str = 'correction'  # 'correction', 'preference', 'ranking'
+    timestamp: Optional[datetime] = None
+    user_id: Optional[str] = None
+    metadata: Optional[dict] = None
+    
+    def __post_init__(self):
+        """Initialize timestamp if not provided."""
+        if self.timestamp is None:
+            self.timestamp = datetime.now()
+        if self.metadata is None:
+            self.metadata = {}
+    
+    def to_dict(self) -> dict:
+        """Convert feedback to dictionary for serialization."""
+        return {
+            'url_or_domain': self.url_or_domain,
+            'model_prediction': self.model_prediction,
+            'human_label': self.human_label,
+            'confidence': self.confidence,
+            'feedback_type': self.feedback_type,
+            'timestamp': self.timestamp.isoformat() if self.timestamp else None,
+            'user_id': self.user_id,
+            'metadata': self.metadata
+        }
+    
+    @classmethod
+    def from_dict(cls, data: dict) -> 'HumanFeedback':
+        """Create HumanFeedback from dictionary."""
+        if 'timestamp' in data and data['timestamp']:
+            data['timestamp'] = datetime.fromisoformat(data['timestamp'])
+        return cls(**data)
+
+
+@dataclass
+class PreferencePair:
+    """
+    Data structure for preference-based feedback (comparing two items).
+    
+    Used in RLHF/RLHP for ranking/comparison scenarios where humans
+    indicate which of two options they prefer.
+    
+    Attributes:
+        item_a: First URL/domain to compare
+        item_b: Second URL/domain to compare
+        preferred: Which item is preferred ('a' or 'b')
+        context: Optional context for the comparison
+        timestamp: When the preference was collected
+        user_id: Optional identifier for the user
+    """
+    item_a: str
+    item_b: str
+    preferred: str  # 'a' or 'b'
+    context: Optional[str] = None
+    timestamp: Optional[datetime] = None
+    user_id: Optional[str] = None
+    
+    def __post_init__(self):
+        """Initialize timestamp and validate preferred."""
+        if self.timestamp is None:
+            self.timestamp = datetime.now()
+        if self.preferred not in ['a', 'b']:
+            raise ValueError("preferred must be 'a' or 'b'")
+
+
+class FeedbackCollector:
+    """
+    Collector for human feedback/preferences.
+    
+    Stores and manages human feedback data that can be used for
+    RLHF/RLHP training. Provides methods to collect, store, and export feedback.
+    """
+    
+    def __init__(self, storage_path: Optional[str] = None):
+        """
+        Initialize feedback collector.
+        
+        Args:
+            storage_path: Optional path to JSON file for persistent storage
+        """
+        self.feedback_history: List[HumanFeedback] = []
+        self.preference_pairs: List[PreferencePair] = []
+        self.storage_path = storage_path
+        
+        # Load existing feedback if storage path exists
+        if storage_path:
+            self.load_from_file(storage_path)
+    
+    def add_feedback(
+        self,
+        url_or_domain: str,
+        model_prediction: int,
+        human_label: int,
+        confidence: Optional[float] = None,
+        feedback_type: str = 'correction',
+        user_id: Optional[str] = None,
+        metadata: Optional[dict] = None
+    ) -> HumanFeedback:
+        """
+        Add human feedback.
+        
+        Args:
+            url_or_domain: URL or domain evaluated
+            model_prediction: Model's prediction (0 or 1)
+            human_label: Human's label (0 or 1)
+            confidence: Model's confidence score
+            feedback_type: Type of feedback
+            user_id: User identifier
+            metadata: Additional metadata
+            
+        Returns:
+            Created HumanFeedback object
+        """
+        feedback = HumanFeedback(
+            url_or_domain=url_or_domain,
+            model_prediction=model_prediction,
+            human_label=human_label,
+            confidence=confidence,
+            feedback_type=feedback_type,
+            user_id=user_id,
+            metadata=metadata
+        )
+        self.feedback_history.append(feedback)
+        
+        # Auto-save if storage path is set
+        if self.storage_path:
+            self.save_to_file(self.storage_path)
+        
+        return feedback
+    
+    def add_preference(
+        self,
+        item_a: str,
+        item_b: str,
+        preferred: str,
+        context: Optional[str] = None,
+        user_id: Optional[str] = None
+    ) -> PreferencePair:
+        """
+        Add preference pair (for ranking/comparison scenarios).
+        
+        Args:
+            item_a: First URL/domain
+            item_b: Second URL/domain
+            preferred: Which is preferred ('a' or 'b')
+            context: Optional context
+            user_id: User identifier
+            
+        Returns:
+            Created PreferencePair object
+        """
+        preference = PreferencePair(
+            item_a=item_a,
+            item_b=item_b,
+            preferred=preferred,
+            context=context,
+            user_id=user_id
+        )
+        self.preference_pairs.append(preference)
+        
+        # Auto-save if storage path is set
+        if self.storage_path:
+            self.save_to_file(self.storage_path)
+        
+        return preference
+    
+    def get_feedback_count(self) -> int:
+        """Get total number of feedback entries."""
+        return len(self.feedback_history)
+    
+    def get_preference_count(self) -> int:
+        """Get total number of preference pairs."""
+        return len(self.preference_pairs)
+    
+    def get_corrections(self) -> List[HumanFeedback]:
+        """Get all feedback entries where model prediction != human label."""
+        return [f for f in self.feedback_history 
+                if f.model_prediction != f.human_label]
+    
+    def export_to_dataset(self) -> List[Tuple[str, int]]:
+        """
+        Export human feedback to dataset format.
+        
+        Returns:
+            List of (url_or_domain, label) tuples based on human labels
+        """
+        return [(f.url_or_domain, f.human_label) for f in self.feedback_history]
+    
+    def save_to_file(self, filepath: str):
+        """
+        Save feedback to JSON file.
+        
+        Args:
+            filepath: Path to JSON file
+        """
+        data = {
+            'feedback_history': [f.to_dict() for f in self.feedback_history],
+            'preference_pairs': [
+                {
+                    'item_a': p.item_a,
+                    'item_b': p.item_b,
+                    'preferred': p.preferred,
+                    'context': p.context,
+                    'timestamp': p.timestamp.isoformat() if p.timestamp else None,
+                    'user_id': p.user_id
+                }
+                for p in self.preference_pairs
+            ]
+        }
+        with open(filepath, 'w') as f:
+            json.dump(data, f, indent=2)
+    
+    def load_from_file(self, filepath: str):
+        """
+        Load feedback from JSON file.
+        
+        Args:
+            filepath: Path to JSON file
+        """
+        try:
+            with open(filepath, 'r') as f:
+                data = json.load(f)
+            
+            self.feedback_history = [
+                HumanFeedback.from_dict(f_dict)
+                for f_dict in data.get('feedback_history', [])
+            ]
+            
+            self.preference_pairs = []
+            for p_dict in data.get('preference_pairs', []):
+                if 'timestamp' in p_dict and p_dict['timestamp']:
+                    p_dict['timestamp'] = datetime.fromisoformat(p_dict['timestamp'])
+                self.preference_pairs.append(PreferencePair(**p_dict))
+        except FileNotFoundError:
+            # File doesn't exist yet, start with empty collections
+            pass
+
+
+class RLHFInterface(ABC):
+    """
+    Abstract base class for RLHF/RLHP integration.
+    
+    This interface defines the contract for implementing Reinforcement Learning
+    from Human Feedback/Preferences. Subclasses should implement methods for
+    training reward models, optimizing policies, and integrating feedback.
+    
+    This is a placeholder for future RLHF/RLHP implementation. Extend this class
+    to implement specific RLHF algorithms (e.g., PPO, DPO).
+    """
+    
+    @abstractmethod
+    def train_reward_model(self, feedback_collector: FeedbackCollector) -> tf.keras.Model:
+        """
+        Train a reward model from human feedback.
+        
+        Args:
+            feedback_collector: FeedbackCollector with human feedback data
+            
+        Returns:
+            Trained reward model (TensorFlow/Keras model)
+        """
+        pass
+    
+    @abstractmethod
+    def optimize_policy(
+        self,
+        base_model: tf.keras.Model,
+        reward_model: tf.keras.Model,
+        feedback_collector: FeedbackCollector
+    ) -> tf.keras.Model:
+        """
+        Optimize policy using reinforcement learning.
+        
+        Args:
+            base_model: Base classifier model to optimize
+            reward_model: Reward model trained on human feedback
+            feedback_collector: FeedbackCollector with feedback data
+            
+        Returns:
+            Optimized model
+        """
+        pass
+    
+    @abstractmethod
+    def compute_reward(
+        self,
+        reward_model: tf.keras.Model,
+        predictions: np.ndarray,
+        features: np.ndarray,
+        feedback: Optional[HumanFeedback] = None
+    ) -> np.ndarray:
+        """
+        Compute rewards using reward model.
+        
+        Args:
+            reward_model: Trained reward model
+            predictions: Model predictions
+            features: Input features
+            feedback: Optional human feedback for comparison
+            
+        Returns:
+            Reward scores
+        """
+        pass
+
+
+# Placeholder for future RLHF/RLHP implementations
+# Example structure (not functional):
+#
+# class PPO_RLHF(RLHFInterface):
+#     """Proximal Policy Optimization implementation of RLHF."""
+#     def train_reward_model(self, feedback_collector):
+#         # Implementation for training reward model
+#         pass
+#
+#     def optimize_policy(self, base_model, reward_model, feedback_collector):
+#         # PPO implementation
+#         pass
+#
+#     def compute_reward(self, reward_model, predictions, features, feedback):
+#         # Reward computation
+#         pass
