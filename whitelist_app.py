@@ -20,7 +20,7 @@ import re
 from flask import Flask, request, jsonify, render_template
 from typing import Optional, Set, Dict, Any
 from datetime import datetime
-from adblocker_ai import AdBlockListParser, AdBlockerModel, FeedbackCollector
+from adblocker_ai import AdBlockListParser, AdBlockerModel, FeedbackCollector, F1Score
 
 app = Flask(__name__)
 
@@ -35,7 +35,7 @@ parser = AdBlockListParser()
 
 # Global model instance (lazy-loaded)
 model: Optional[AdBlockerModel] = None
-model_lock = threading.Lock()
+model_lock = threading.RLock()  # Use RLock (reentrant lock) to prevent deadlocks
 
 # Global feedback collector
 feedback_collector: Optional[FeedbackCollector] = None
@@ -185,24 +185,40 @@ def load_model_instance() -> Optional[AdBlockerModel]:
     """
     global model
     
-    with model_lock:
+    acquired = model_lock.acquire(blocking=False)
+    if not acquired:
+        model_lock.acquire(blocking=True)
+    
+    try:
+        # Check if cached model is valid
         if model is not None:
-            return model
+            # Verify the cached model is actually loaded
+            if hasattr(model, 'model') and model.model is not None and getattr(model, 'is_trained', False):
+                return model
+            else:
+                # Clear the invalid cached model
+                model = None
         
-        # Try loading model from default path
+        # Try loading model from paths - prefer .keras file over directory
         model_paths = [MODEL_PATH, DEFAULT_MODEL_PATH]
         
         for path in model_paths:
-            if os.path.exists(path):
+            # Only try files, not directories (Keras 3 can't load from directories)
+            if os.path.exists(path) and os.path.isfile(path):
                 try:
                     model = AdBlockerModel(input_dim=25, whitelist_parser=parser)
                     model.load_model(path)
+                    # Verify the model was actually loaded
+                    if model.model is None:
+                        raise ValueError(f"Model failed to load from {path} - model.model is None")
                     return model
                 except Exception as e:
                     print(f"Error loading model from {path}: {e}")
                     continue
         
         return None
+    finally:
+        model_lock.release()
 
 
 def reload_model():
@@ -210,7 +226,8 @@ def reload_model():
     global model
     with model_lock:
         model = None
-        load_model_instance()
+    # Call load_model_instance outside the lock to avoid potential deadlock
+    load_model_instance()
 
 
 def run_training_thread(epochs: int = 50, batch_size: int = 32, max_samples: Optional[int] = None):
@@ -501,32 +518,45 @@ def predict_url():
     Returns:
         JSON response with prediction and confidence
     """
-    data = request.get_json()
-    
-    if not data or 'url' not in data:
-        return jsonify({
-            'success': False,
-            'error': 'Missing required field: url'
-        }), 400
-    
-    url = data['url'].strip()
-    
-    if not url:
-        return jsonify({
-            'success': False,
-            'error': 'URL cannot be empty'
-        }), 400
-    
-    # Load model
-    model_instance = load_model_instance()
-    
-    if model_instance is None:
-        return jsonify({
-            'success': False,
-            'error': 'Model not found. Please train the model first.'
-        }), 404
-    
     try:
+        # Get JSON data from request
+        try:
+            data = request.get_json(force=True)
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'error': f'Error parsing JSON: {str(e)}'
+            }), 400
+        
+        if not data:
+            return jsonify({
+                'success': False,
+                'error': 'Invalid or missing JSON payload'
+            }), 400
+        
+        if 'url' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'Missing required field: url'
+            }), 400
+        
+        url = data['url'].strip()
+        
+        if not url:
+            return jsonify({
+                'success': False,
+                'error': 'URL cannot be empty'
+            }), 400
+        
+        # Load model
+        model_instance = load_model_instance()
+        
+        if model_instance is None:
+            return jsonify({
+                'success': False,
+                'error': 'Model not found. Please train the model first.'
+            }), 404
+        
         # Get prediction
         prediction, confidence = model_instance.predict(url)
         
@@ -535,7 +565,7 @@ def predict_url():
         return jsonify({
             'success': True,
             'url': url,
-            'prediction': prediction,
+            'prediction': int(prediction),
             'label': label,
             'confidence': float(confidence)
         })

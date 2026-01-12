@@ -1654,7 +1654,9 @@ class AdBlockerModel:
             path: Directory path where the model is saved
         """
         try:
-            self.model = tf.keras.models.load_model(path)
+            # Load with custom objects to handle F1Score metric
+            custom_objects = {'F1Score': F1Score}
+            self.model = tf.keras.models.load_model(path, custom_objects=custom_objects)
             # Infer input_dim from loaded model
             input_shape = self.model.input_shape
             if input_shape and len(input_shape) > 1:

@@ -571,10 +571,17 @@
             showMessage('predict-message', 'Testing URL...', 'info');
             
             try {
+                const requestBody = { url: url };
+                console.log('Sending request with body:', requestBody);
+                console.log('Stringified body:', JSON.stringify(requestBody));
+                
                 const response = await fetch('/api/predict', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url: url })
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify(requestBody)
                 });
                 
                 console.log('Response status:', response.status);
