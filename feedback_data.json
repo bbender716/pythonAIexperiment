@@ -1,0 +1,55 @@
+{
+  "feedback_history": [
+    {
+      "url_or_domain": "google.com",
+      "model_prediction": 1,
+      "human_label": 0,
+      "confidence": 0.5107505321502686,
+      "feedback_type": "correction",
+      "timestamp": "2026-01-11T18:56:24.958472",
+      "user_id": null,
+      "metadata": {}
+    },
+    {
+      "url_or_domain": "apnews.com",
+      "model_prediction": 1,
+      "human_label": 0,
+      "confidence": 0.5107505321502686,
+      "feedback_type": "correction",
+      "timestamp": "2026-01-11T18:59:37.212506",
+      "user_id": null,
+      "metadata": {}
+    },
+    {
+      "url_or_domain": "gmail.com",
+      "model_prediction": 1,
+      "human_label": 0,
+      "confidence": 0.5105798244476318,
+      "feedback_type": "correction",
+      "timestamp": "2026-01-11T18:59:54.353091",
+      "user_id": null,
+      "metadata": {}
+    },
+    {
+      "url_or_domain": "cnn.com",
+      "model_prediction": 1,
+      "human_label": 0,
+      "confidence": 0.5581150054931641,
+      "feedback_type": "correction",
+      "timestamp": "2026-01-11T19:00:46.216850",
+      "user_id": null,
+      "metadata": {}
+    },
+    {
+      "url_or_domain": "cnn.com",
+      "model_prediction": 1,
+      "human_label": 0,
+      "confidence": 0.5095109939575195,
+      "feedback_type": "correction",
+      "timestamp": "2026-01-11T20:05:50.180353",
+      "user_id": null,
+      "metadata": {}
+    }
+  ],
+  "preference_pairs": []
+}

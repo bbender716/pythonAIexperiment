@@ -1509,7 +1509,7 @@ class AdBlockerModel:
         self.is_trained = True
         return history
     
-    def predict(self, url_or_domain: str, threshold: float = 0.5) -> Tuple[int, float]:
+    def predict(self, url_or_domain: str, threshold: float = 0.75) -> Tuple[int, float]:
         """
         Predict whether a URL or domain is an ad.
         
@@ -1987,10 +1987,7 @@ class RLHFInterface(ABC):
     
     This interface defines the contract for implementing Reinforcement Learning
     from Human Feedback/Preferences. Subclasses should implement methods for
-    training reward models, optimizing policies, and integrating feedback.
-    
-    This is a placeholder for future RLHF/RLHP implementation. Extend this class
-    to implement specific RLHF algorithms (e.g., PPO, DPO).
+
     """
     
     @abstractmethod
@@ -2048,23 +2045,6 @@ class RLHFInterface(ABC):
         """
         pass
 
-
-# Placeholder for future RLHF/RLHP implementations
-# Example structure (not functional):
-#
-# class PPO_RLHF(RLHFInterface):
-#     """Proximal Policy Optimization implementation of RLHF."""
-#     def train_reward_model(self, feedback_collector):
-#         # Implementation for training reward model
-#         pass
-#
-#     def optimize_policy(self, base_model, reward_model, feedback_collector):
-#         # PPO implementation
-#         pass
-#
-#     def compute_reward(self, reward_model, predictions, features, feedback):
-#         # Reward computation
-#         pass
 
 
 # ============================================================================
